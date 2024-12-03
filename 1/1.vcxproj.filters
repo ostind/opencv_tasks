@@ -19,4 +19,48 @@
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <Image Include="samples\1-2.template.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\1-3.template.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\1.correlation.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\1.image.edges.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\1.results.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\1.template.edges.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\1.template.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\1.correlation.tiff">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\2.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\2_1.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\2_2.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\2_3.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="samples\2_4.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+  </ItemGroup>
 </Project>

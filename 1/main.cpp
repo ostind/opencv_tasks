@@ -4,8 +4,14 @@
 #include <opencv2/highgui.hpp>
 #include <iostream>
 #include <vector>
+#include <cmath>
 
-using namespace cv;
+void show(cv::Mat& image, const std::string& title = "Image")
+{
+    namedWindow(title, cv::WINDOW_AUTOSIZE);
+
+    imshow(title, image);
+}
 
 cv::Mat resize_image(cv::Mat& image, int coeff)
 {
@@ -15,9 +21,8 @@ cv::Mat resize_image(cv::Mat& image, int coeff)
     return resized_image;
 }
 
-cv::Mat remove_shadows(cv::Mat& image)
+cv::Mat remove_shadows(cv::Mat& image, int kernel_scale_factor)
 {
-    const int kernel_scale_factor = 3;
     const int gaussian_kernel_size = image.size().width / kernel_scale_factor | 1;
 
     cv::Mat lightmap;
@@ -32,7 +37,7 @@ cv::Mat remove_shadows(cv::Mat& image)
 cv::Mat find_edges(cv::Mat& image)
 {
     cv::Mat result;
-    cv::Canny(image, result, 250, 250);
+    cv::Canny(image, result, 150, 150);
 
     return result;
 }
@@ -41,7 +46,7 @@ cv::Mat distances(cv::Mat& image)
 {
     cv::Mat result;
     cv::Mat labels;
-    cv::distanceTransform(image, result, labels, DistanceTypes::DIST_C, 3, 5);
+    cv::distanceTransform(image, result, labels, cv::DistanceTypes::DIST_C, 3, 5);
 
     return labels;
 }
@@ -49,13 +54,208 @@ cv::Mat distances(cv::Mat& image)
 cv::Mat match(cv::Mat& image, const cv::Mat& template_image)
 {
     cv::Mat result;
-    cv::matchTemplate(image, template_image, result, TemplateMatchModes::TM_CCOEFF);
-    cv::normalize(result, result, 1, 0, NormTypes::NORM_MINMAX);
+    cv::matchTemplate(image, template_image, result, cv::TemplateMatchModes::TM_CCOEFF);
+    cv::normalize(result, result, 1, 0, cv::NormTypes::NORM_MINMAX);
 
     return result;
 }
 
-int main()
+cv::Mat remove_color_at_bounds(cv::Mat& image, int x, int y, int bounds)
+{
+    cv::Mat hsv_image; cv::cvtColor(image, hsv_image, cv::COLOR_BGR2HSV);
+    auto color = hsv_image.at<cv::Vec3b>(x, y);
+
+    auto bound = [](uchar v) { return v <= 255 ? v : 255; };
+
+    cv::Vec3b lower = cv::Vec3b(bound(color[0] - bounds), 0, 0);
+    cv::Vec3b upper = cv::Vec3b(bound(color[0] + bounds), 255, 255);
+
+    cv::Mat mask; cv::inRange(hsv_image, lower, upper, mask);
+    mask = 255 - mask;
+
+    cv::Mat removed; cv::bitwise_and(hsv_image, hsv_image, removed, mask);
+
+    return removed;
+}
+
+cv::Mat morph_open(cv::Mat& image, int kernel_size)
+{
+    cv::Mat kernel = cv::Mat::ones(cv::Size(kernel_size, kernel_size), CV_8U);
+    cv::Mat result; 
+    cv::morphologyEx(image, result, cv::MorphTypes::MORPH_OPEN, kernel);
+
+    return result;
+}
+
+double calc_elongation(cv::Moments& m)
+{
+    double sqrt = std::sqrt((m.m20 - m.m02) * (m.m20 - m.m02) + 4 * m.m11 * m.m11);
+    double d1 = m.m20 + m.m02 + sqrt;
+    double d2 = m.m20 + m.m02 - sqrt;
+    return d1 / d2;
+}
+
+void parse_contours(cv::Mat& image, cv::Mat& result)
+{
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(image, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    cv::Mat contours_image(image.rows, image.cols, CV_8UC3, cv::Scalar(0, 0, 0));
+
+    for (auto& c : contours)
+    {
+        std::vector<std::vector<cv::Point>> contours(1, c);
+
+        double area = cv::contourArea(contours[0], false);
+        cv::Mat hull; cv::convexHull(contours[0], hull);
+        double hull_area = cv::contourArea(hull);
+        double solidity = area / hull_area;
+
+        std::cout << solidity << std::endl;
+
+       /* cv::RotatedRect el = cv::fitEllipse(c);
+        cv::ellipse(contours_image, el, cv::Scalar(0, 255, 0), 1);*/
+
+        //cv::Mat corners; cv::goodFeaturesToTrack(image, corners, 20, 0.01, 1);
+        //cv::Mat polys; cv::approxPolyDP(contours[0], polys, 0.015 * cv::arcLength(contours[0], true), true);
+        //cv::polylines(image, polys, true, cv::Scalar(0, 0, 0), 2);
+        //
+        //
+        //if (polys.rows > 5)
+        //{
+        //    double min, max;
+        //    cv::Point min_loc, max_loc;
+        //    cv::minMaxLoc(contours[0], &min, &max, &min_loc, &max_loc);
+        //    cv::rectangle(result, cv::Rect(min_loc.x, min_loc.y, max_loc.x - min_loc.x, max_loc.y - min_loc.y), cv::Scalar(255, 0, 0));
+        //}
+
+        //cv::drawContours(contours_image, contours, -1, cv::Vec3b(255, 0, 0));
+        show(image);
+
+
+        //auto m = cv::moments(c, false);
+
+        //double elongation = calc_elongation(m);
+
+        //std::cout << el.size.height / el.size.width << std::endl;
+        //cv::waitKey();
+    }
+}
+
+void parse_components(cv::Mat& image)
+{
+    cv::Mat labels, stats, centroids;
+    cv::connectedComponentsWithStats(image, labels, stats, centroids);
+
+    cv::Mat areas(image.rows, image.cols, CV_8UC3, cv::Scalar(0, 0, 0));
+
+    cv::RNG rng(time(0));
+    int components_count = stats.rows;
+    cv::Mat colors(1, components_count, CV_8UC3, cv::Scalar(0, 0, 0));
+
+    for (int x = 1; x < components_count; ++x)
+    {
+        colors.at<cv::Vec3b>(0, x) = cv::Vec3b(
+            rng.uniform(0, 255),
+            rng.uniform(0, 255),
+            rng.uniform(0, 255)
+        );
+    }
+
+    int max_area = 0;
+    std::vector<double> elongations(components_count + 1);
+
+    for (int c = 1; c < components_count; ++c)
+    {
+        int x = stats.at<int>(cv::Point(0, c));
+        int y = stats.at<int>(cv::Point(1, c));
+        int width = stats.at<int>(cv::Point(2, c));
+        int height = stats.at<int>(cv::Point(3, c));
+        int area = stats.at<int>(cv::Point(4, c));
+
+        max_area = std::max(max_area, area);
+
+        int roi_width = x + width > image.cols ? x + width - image.cols : x + width;
+        int roi_height = y + height > image.rows ? y + height - image.rows : y + height;
+
+        std::cout << x << " " << y << " " << width << " " << height << " " << roi_width << " " << roi_height << std::endl;
+
+        cv::Mat region = image(cv::Range(y, roi_height), cv::Range(x, roi_width));
+
+        cv::Mat corners; cv::goodFeaturesToTrack(region, corners, 100, 0.001, 30);
+
+        std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(region, contours, cv::RETR_CCOMP, cv::CHAIN_APPROX_NONE);
+        cv::Mat polys; cv::approxPolyDP(contours[0], polys, 0.1 * cv::arcLength(contours[0], true), true);
+
+       /* std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(region, contours, cv::RETR_CCOMP, cv::CHAIN_APPROX_NONE);
+        cv::Mat polys; cv::approxPolyDP(contours[0], polys, 0.01 * cv::arcLength(contours[0], true), true);
+
+        if (polys.rows < 10)
+        {
+            cv::Rect r = cv::boundingRect(contours[0]);
+            double ratio = (double)(r.width) / r.height;
+            elongations[c] = 1;
+            continue;
+        }
+        else
+        {
+            elongations[c] = 0;
+            continue;
+        }
+
+        auto m = cv::moments(contours[0], true);
+        double elongation = calc_elongation(m);*/
+
+        //cv::drawContours(image, contours, 0, cv::Vec3b(100, 100, 100), 1, 8, cv::noArray(), 2147483647, cv::Point(x, y));
+
+        //std::cout << elongation * cv::arcLength(contours[0], true) << std::endl;
+
+        std::cout << corners.rows << std::endl;
+        //elongations[c] = elongation * cv::arcLength(contours[0], true);
+
+        elongations[c] = polys.rows;
+
+      /*  show(image, "image");
+        cv::waitKey(0);*/
+    }
+
+    //cv::normalize(elongations, elongations, 1, cv::NormTypes::NORM_MINMAX);
+
+    for (int x = 0; x < labels.rows; ++x)
+    {
+        for (int y = 0; y < labels.cols; ++y)
+        {
+            int component_id = labels.at<int>(x, y);
+            if (component_id == 0) continue;
+
+            double elongation = elongations[component_id];
+
+            cv::Vec3b& color = areas.at<cv::Vec3b>(x, y);
+
+            int width = stats.at<int>(cv::Point(cv::CC_STAT_WIDTH, component_id));
+            int height = stats.at<int>(cv::Point(cv::CC_STAT_HEIGHT, component_id));
+            int area = stats.at<int>(cv::Point(cv::CC_STAT_AREA, component_id));
+
+            double coeff = 0.7;
+
+            if (elongation > 0.2)
+            {
+                color = colors.at<cv::Vec3b>(0, 2);
+            }
+            else
+            {
+                color = colors.at<cv::Vec3b>(0, 3);
+
+            }
+        }
+    }
+
+    show(areas, "image");
+}
+
+
+void task1()
 {
     cv::Mat image = cv::imread("samples/1.jpg", cv::IMREAD_COLOR);
     cv::Mat template_image = cv::imread("samples/1-3.template.jpg", cv::IMREAD_COLOR);
@@ -79,7 +279,7 @@ int main()
     cv::Rect match_rect(max_loc.x, max_loc.y, resized_template.cols, resized_template.rows);
     cv::rectangle(image_with_match, match_rect, 255, 2);
 
-    namedWindow("Image", WINDOW_AUTOSIZE);
+    namedWindow("Image", cv::WINDOW_AUTOSIZE);
 
     cv::Mat results;
     cv::hconcat(resized_image, image_with_match, results);
@@ -90,7 +290,30 @@ int main()
     cv::imwrite("samples/1.template.edges.jpg", template_edges);
     cv::imwrite("samples/1.correlation.tiff", correlation_map);
     cv::imwrite("samples/1.results.jpg", results);
+}
 
-    waitKey(0);
+void task2()
+{
+    cv::Mat image = cv::imread("samples/2_1.jpg", cv::IMREAD_COLOR);
+
+    cv::Mat resized_image = resize_image(image, 2);
+
+    cv::Mat bg_removed = remove_color_at_bounds(resized_image, 0, 0, 5);
+
+    cv::Mat gs_bg_removed; cv::cvtColor(bg_removed, gs_bg_removed, cv::COLOR_BGR2GRAY);
+
+    cv::Mat binary_raw; cv::threshold(gs_bg_removed, binary_raw, 0, 255, cv::ThresholdTypes::THRESH_TRIANGLE);
+    cv::Mat binary = morph_open(binary_raw, 6);
+
+    parse_contours(binary, image);
+    //parse_components(binary);
+}
+
+int main()
+{
+    //task1();
+    task2();
+
+    cv::waitKey(0);
     return 0;
 }
