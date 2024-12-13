@@ -3,6 +3,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 #include <iostream>
+#include <utility>
 #include <vector>
 #include <cmath>
 
@@ -78,11 +79,11 @@ cv::Mat remove_color_at_bounds(cv::Mat& image, int x, int y, int bounds)
     return removed;
 }
 
-cv::Mat morph_open(cv::Mat& image, int kernel_size)
+cv::Mat morph(cv::Mat& image, int kernel_size)
 {
     cv::Mat kernel = cv::Mat::ones(cv::Size(kernel_size, kernel_size), CV_8U);
     cv::Mat result; 
-    cv::morphologyEx(image, result, cv::MorphTypes::MORPH_OPEN, kernel);
+    cv::morphologyEx(image, result, cv::MorphTypes::MORPH_DILATE, kernel);
 
     return result;
 }
@@ -101,44 +102,64 @@ void parse_contours(cv::Mat& image, cv::Mat& result)
     cv::findContours(image, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     cv::Mat contours_image(image.rows, image.cols, CV_8UC3, cv::Scalar(0, 0, 0));
 
+    struct contours_data {
+        std::vector<cv::Point_<int>> c;
+        double solidity, elongation;
+        int x, y, width, height;
+
+        contours_data(std::vector<cv::Point_<int>> c, double s, double e, int x, int y, int w, int h)
+            : c(std::move(c)), solidity(s), elongation(e), x(x), y(y), width(w), height(h) {}
+    };
+    std::vector<contours_data> cd;
+    std::vector<double> elongations;
+
     for (auto& c : contours)
     {
-        std::vector<std::vector<cv::Point>> contours(1, c);
-
-        double area = cv::contourArea(contours[0], false);
-        cv::Mat hull; cv::convexHull(contours[0], hull);
+        double area = cv::contourArea(c, false);
+        cv::Mat hull; cv::convexHull(c, hull);
         double hull_area = cv::contourArea(hull);
         double solidity = area / hull_area;
 
-        std::cout << solidity << std::endl;
+        auto m = cv::moments(c, false);
 
-       /* cv::RotatedRect el = cv::fitEllipse(c);
-        cv::ellipse(contours_image, el, cv::Scalar(0, 255, 0), 1);*/
+        double elongation = calc_elongation(m);
 
-        //cv::Mat corners; cv::goodFeaturesToTrack(image, corners, 20, 0.01, 1);
-        //cv::Mat polys; cv::approxPolyDP(contours[0], polys, 0.015 * cv::arcLength(contours[0], true), true);
-        //cv::polylines(image, polys, true, cv::Scalar(0, 0, 0), 2);
-        //
-        //
-        //if (polys.rows > 5)
-        //{
-        //    double min, max;
-        //    cv::Point min_loc, max_loc;
-        //    cv::minMaxLoc(contours[0], &min, &max, &min_loc, &max_loc);
-        //    cv::rectangle(result, cv::Rect(min_loc.x, min_loc.y, max_loc.x - min_loc.x, max_loc.y - min_loc.y), cv::Scalar(255, 0, 0));
-        //}
+        cv::Rect r = cv::boundingRect(c);
 
-        //cv::drawContours(contours_image, contours, -1, cv::Vec3b(255, 0, 0));
-        show(image);
-
-
-        //auto m = cv::moments(c, false);
-
-        //double elongation = calc_elongation(m);
-
-        //std::cout << el.size.height / el.size.width << std::endl;
-        //cv::waitKey();
+        cd.push_back({c, solidity, 0.0, r.x, r.y, r.width, r.height});
+        elongations.push_back(elongation);
     }
+
+    std::vector<double> normalized_elongations;
+    cv::normalize(elongations, normalized_elongations);
+
+    for (int i = 0; i < cd.size(); ++i) {
+        cd[i].elongation = normalized_elongations[i];
+    }
+
+    for (auto &[c, s, e, x, y, w, h] : cd) {
+        std::cout << y << " " << x << " " << s << " " << e << " " << std::endl;
+        std::vector<std::vector<cv::Point>> contours(1, c);
+
+        cv::Vec3b color;
+        if (s > 0.94 && e < 0.4) {
+            color = cv::Vec3b(255, 0, 0);
+        } else {
+            color = cv::Vec3b(0, 255, 0);
+        }
+        cv::drawContours(result, contours, -1, color, 2);
+
+//        std::string s_text;
+//        s_text += "S: ";
+//        s_text += std::to_string(s).substr(0, 5);
+//        std::string e_text;
+//        e_text += "  E: ";
+//        e_text += std::to_string(e).substr(0, 5);
+//        cv::putText(result, s_text, cv::Point(x, y), cv::FONT_HERSHEY_PLAIN, 1.0, CV_RGB(0, 0, 0), 2);
+//        cv::putText(result, e_text, cv::Point(x, y + 20), cv::FONT_HERSHEY_PLAIN, 1.0, CV_RGB(0, 0, 0), 2);
+    }
+
+    show(result);
 }
 
 void parse_components(cv::Mat& image)
@@ -254,7 +275,6 @@ void parse_components(cv::Mat& image)
     show(areas, "image");
 }
 
-
 void task1()
 {
     cv::Mat image = cv::imread("samples/1.jpg", cv::IMREAD_COLOR);
@@ -298,14 +318,33 @@ void task2()
 
     cv::Mat resized_image = resize_image(image, 2);
 
+    show(resized_image);
+    cv::waitKey();
+
     cv::Mat bg_removed = remove_color_at_bounds(resized_image, 0, 0, 5);
+
+    show(bg_removed);
+    cv::waitKey(0);
+    cv::destroyAllWindows();
+
 
     cv::Mat gs_bg_removed; cv::cvtColor(bg_removed, gs_bg_removed, cv::COLOR_BGR2GRAY);
 
-    cv::Mat binary_raw; cv::threshold(gs_bg_removed, binary_raw, 0, 255, cv::ThresholdTypes::THRESH_TRIANGLE);
-    cv::Mat binary = morph_open(binary_raw, 6);
+    show(gs_bg_removed);
+    cv::waitKey(0);
 
-    parse_contours(binary, image);
+
+    cv::Mat binary_raw; cv::threshold(gs_bg_removed, binary_raw, 0, 255, cv::ThresholdTypes::THRESH_TRIANGLE);
+
+    show(binary_raw);
+    cv::waitKey(0);
+
+    cv::Mat binary = morph(binary_raw, 6);
+
+    show(binary);
+    cv::waitKey(0);
+
+    parse_contours(binary, resized_image);
     //parse_components(binary);
 }
 
